@@ -27,7 +27,6 @@ import mt.filter.AnalyticsFilter;
  * @author Group 78
  *
  */
-//this comment workssssss
 
 public class MicroServer implements MicroTraderServer {
 	
