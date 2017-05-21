@@ -30,7 +30,7 @@ import mt.filter.AnalyticsFilter;
 //this comment workssssss
 
 public class MicroServer implements MicroTraderServer {
-	
+	private HashMap<String,Integer> unnfulfilledOrders = new HashMap<>();
 	public static void main(String[] args) {
 		ServerComm serverComm = new AnalyticsFilter(new ServerCommImpl());
 		MicroTraderServer server = new MicroServer();
@@ -58,7 +58,7 @@ public class MicroServer implements MicroTraderServer {
 	 * Order Server ID
 	 */
 	private static int id = 1;
-	
+
 	/** The value is {@value #EMPTY} */
 	public static final int EMPTY = 0;
 
@@ -74,7 +74,7 @@ public class MicroServer implements MicroTraderServer {
 	@Override
 	public void start(ServerComm serverComm) {
 		serverComm.start();
-		
+
 		LOGGER.log(Level.INFO, "Starting Server...");
 
 		this.serverComm = serverComm;
@@ -82,38 +82,50 @@ public class MicroServer implements MicroTraderServer {
 		ServerSideMessage msg = null;
 		while ((msg = serverComm.getNextMessage()) != null) {
 			ServerSideMessage.Type type = msg.getType();
-			
+
 			if(type == null){
 				serverComm.sendError(null, "Type was not recognized");
 				continue;
 			}
 
 			switch (type) {
-				case CONNECTED:
-					try{
-						processUserConnected(msg);
-					}catch (ServerException e) {
-						serverComm.sendError(msg.getSenderNickname(), e.getMessage());
-					}
-					break;
-				case DISCONNECTED:
-					processUserDisconnected(msg);
-					break;
-				case NEW_ORDER:
-					try {
-						verifyUserConnected(msg);
-						if(msg.getOrder().getServerOrderID() == EMPTY){
-							msg.getOrder().setServerOrderID(id++);
-						}
-						notifyAllClients(msg.getOrder());
-						processNewOrder(msg);
-					} catch (ServerException e) {
-						serverComm.sendError(msg.getSenderNickname(), e.getMessage());
-					}
-					break;
-				default:
-					break;
+			case CONNECTED:
+				try{
+					processUserConnected(msg);
+				}catch (ServerException e) {
+					serverComm.sendError(msg.getSenderNickname(), e.getMessage());
 				}
+				break;
+			case DISCONNECTED:
+				processUserDisconnected(msg);
+				break;
+			case NEW_ORDER:
+				try {
+					verifyUserConnected(msg);
+					if(msg.getOrder().getServerOrderID() == EMPTY){
+						msg.getOrder().setServerOrderID(id++);
+					}
+					if(msg.getOrder().getNumberOfUnits()>=10){
+						if(unnfulfilledOrders.containsKey(msg.getSenderNickname())&&unnfulfilledOrders.get(msg.getSenderNickname())<5){
+							unnfulfilledOrders.put(msg.getSenderNickname(),unnfulfilledOrders.get(msg.getSenderNickname())+1);
+							System.out.println(unnfulfilledOrders.get(msg.getSenderNickname()));
+							notifyAllClients(msg.getOrder());
+							processNewOrder(msg);
+						}else if(!unnfulfilledOrders.containsKey(msg.getSenderNickname())){ //se o user nao existir
+							unnfulfilledOrders.put(msg.getSenderNickname(),1);
+							System.out.println(unnfulfilledOrders.get(msg.getSenderNickname()));
+							notifyAllClients(msg.getOrder());
+							processNewOrder(msg);
+						}
+
+					}
+				} catch (ServerException e) {
+					serverComm.sendError(msg.getSenderNickname(), e.getMessage());
+				}
+				break;
+			default:
+				break;
+			}
 		}
 		LOGGER.log(Level.INFO, "Shutting Down Server...");
 	}
@@ -134,7 +146,7 @@ public class MicroServer implements MicroTraderServer {
 			}
 		}
 		throw new ServerException("The user " + msg.getSenderNickname() + " is not connected.");
-		
+
 	}
 
 	/**
@@ -148,20 +160,20 @@ public class MicroServer implements MicroTraderServer {
 	 */
 	private void processUserConnected(ServerSideMessage msg) throws ServerException {
 		LOGGER.log(Level.INFO, "Connecting client " + msg.getSenderNickname() + "...");
-		
+
 		// verify if user is already connected
 		for (Entry<String, Set<Order>> entry : orderMap.entrySet()) {
 			if(entry.getKey().equals(msg.getSenderNickname())){
 				throw new ServerException("The user " + msg.getSenderNickname() + " is already connected.");
 			}
 		}
-		
+
 		// register the new user
 		orderMap.put(msg.getSenderNickname(), new HashSet<Order>());
-		
+
 		notifyClientsOfCurrentActiveOrders(msg);
 	}
-	
+
 	/**
 	 * Send current active orders sorted by server ID ASC
 	 * @param msg
@@ -175,7 +187,7 @@ public class MicroServer implements MicroTraderServer {
 				ordersToSend.add(order);
 			}
 		}
-		
+
 		// sort the orders to send to clients by server id
 		Collections.sort(ordersToSend, new Comparator<Order>() {
 			@Override
@@ -183,7 +195,7 @@ public class MicroServer implements MicroTraderServer {
 				return o1.getServerOrderID() < o2.getServerOrderID() ? -1 : 1;
 			}
 		});
-		
+
 		for(Order order : ordersToSend){
 			serverComm.sendOrder(msg.getSenderNickname(), order);
 		}
@@ -197,10 +209,10 @@ public class MicroServer implements MicroTraderServer {
 	 */
 	private void processUserDisconnected(ServerSideMessage msg) {
 		LOGGER.log(Level.INFO, "Disconnecting client " + msg.getSenderNickname()+ "...");
-		
+
 		//remove the client orders
 		orderMap.remove(msg.getSenderNickname());
-		
+
 		// notify all clients of current unfulfilled orders
 		for (Entry<String, Set<Order>> entry : orderMap.entrySet()) {
 			Set<Order> orders = entry.getValue();
@@ -220,7 +232,7 @@ public class MicroServer implements MicroTraderServer {
 		LOGGER.log(Level.INFO, "Processing new order...");
 
 		Order o = msg.getOrder();
-		
+
 		// save the order on map
 		saveOrder(o);
 
@@ -228,7 +240,7 @@ public class MicroServer implements MicroTraderServer {
 		if (o.isBuyOrder()) {
 			processBuy(msg.getOrder());
 		}
-		
+
 		// if is sell order
 		if (o.isSellOrder()) {
 			processSell(msg.getOrder());
@@ -244,7 +256,7 @@ public class MicroServer implements MicroTraderServer {
 		updatedOrders = new HashSet<>();
 
 	}
-	
+
 	/**
 	 * Store the order on map
 	 * 
@@ -253,7 +265,7 @@ public class MicroServer implements MicroTraderServer {
 	 */
 	private void saveOrder(Order o) {
 		LOGGER.log(Level.INFO, "Storing the new order...");
-		
+
 		//save order on map
 		Set<Order> orders = orderMap.get(o.getNickname());
 		orders.add(o);		
@@ -267,7 +279,7 @@ public class MicroServer implements MicroTraderServer {
 	 */
 	private void processSell(Order sellOrder){
 		LOGGER.log(Level.INFO, "Processing sell order...");
-		
+
 		for (Entry<String, Set<Order>> entry : orderMap.entrySet()) {
 			for (Order o : entry.getValue()) {
 				if (o.isBuyOrder() && o.getStock().equals(sellOrder.getStock()) && o.getPricePerUnit() >= sellOrder.getPricePerUnit()) {
@@ -275,9 +287,9 @@ public class MicroServer implements MicroTraderServer {
 				}
 			}
 		}
-		
+
 	}
-	
+
 	/**
 	 * Process the buy order
 	 * 
@@ -305,21 +317,26 @@ public class MicroServer implements MicroTraderServer {
 	 */
 	private void doTransaction(Order buyOrder, Order sellerOrder) {
 		LOGGER.log(Level.INFO, "Processing transaction between seller and buyer...");
-
-		if (buyOrder.getNumberOfUnits() >= sellerOrder.getNumberOfUnits()) {
-			buyOrder.setNumberOfUnits(buyOrder.getNumberOfUnits()
-					- sellerOrder.getNumberOfUnits());
-			sellerOrder.setNumberOfUnits(EMPTY);
-		} else {
-			sellerOrder.setNumberOfUnits(sellerOrder.getNumberOfUnits()
-					- buyOrder.getNumberOfUnits());
-			buyOrder.setNumberOfUnits(EMPTY);
+		if(!buyOrder.getNickname().equals(sellerOrder.getNickname())){
+			if (buyOrder.getNumberOfUnits() >= sellerOrder.getNumberOfUnits()) {
+				buyOrder.setNumberOfUnits(buyOrder.getNumberOfUnits()
+						- sellerOrder.getNumberOfUnits());
+				System.out.println("O user " + buyOrder.getNickname()+ "tem "+unnfulfilledOrders.get(buyOrder.getNickname()));
+				unnfulfilledOrders.put(buyOrder.getNickname(),unnfulfilledOrders.get(buyOrder.getNickname())-1);
+				unnfulfilledOrders.put(sellerOrder.getNickname(),unnfulfilledOrders.get(sellerOrder.getNickname())-1);
+				sellerOrder.setNumberOfUnits(EMPTY);
+			} else {
+				sellerOrder.setNumberOfUnits(sellerOrder.getNumberOfUnits()
+						- buyOrder.getNumberOfUnits());
+				buyOrder.setNumberOfUnits(EMPTY);
+				unnfulfilledOrders.put(buyOrder.getNickname(),unnfulfilledOrders.get(buyOrder.getNickname())-1);
+				unnfulfilledOrders.put(sellerOrder.getNickname(),unnfulfilledOrders.get(sellerOrder.getNickname())-1);
+			}
 		}
-		
 		updatedOrders.add(buyOrder);
 		updatedOrders.add(sellerOrder);
 	}
-	
+
 	/**
 	 * Notifies clients about a changed order
 	 * 
@@ -332,7 +349,7 @@ public class MicroServer implements MicroTraderServer {
 			notifyAllClients(order);
 		}
 	}
-	
+
 	/**
 	 * Notifies all clients about a new order
 	 * 
@@ -349,13 +366,13 @@ public class MicroServer implements MicroTraderServer {
 			serverComm.sendOrder(entry.getKey(), order); 
 		}
 	}
-	
+
 	/**
 	 * Remove fulfilled orders
 	 */
 	private void removeFulfilledOrders() {
 		LOGGER.log(Level.INFO, "Removing fulfilled orders...");
-		
+
 		// remove fulfilled orders
 		for (Entry<String, Set<Order>> entry : orderMap.entrySet()) {
 			Iterator<Order> it = entry.getValue().iterator();
