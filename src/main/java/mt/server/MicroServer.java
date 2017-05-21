@@ -1,5 +1,7 @@
 package mt.server;
 
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -12,6 +14,19 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.xml.sax.SAXException;
 
 import mt.Order;
 import mt.comm.ServerComm;
@@ -106,17 +121,17 @@ public class MicroServer implements MicroTraderServer {
 						msg.getOrder().setServerOrderID(id++);
 					}
 					if(msg.getOrder().getNumberOfUnits()>=10){
-						if(unnfulfilledOrders.containsKey(msg.getSenderNickname())&&unnfulfilledOrders.get(msg.getSenderNickname())<5){
-							unnfulfilledOrders.put(msg.getSenderNickname(),unnfulfilledOrders.get(msg.getSenderNickname())+1);
-							System.out.println(unnfulfilledOrders.get(msg.getSenderNickname()));
-							notifyAllClients(msg.getOrder());
-							processNewOrder(msg);
-						}else if(!unnfulfilledOrders.containsKey(msg.getSenderNickname())){ //se o user nao existir
-							unnfulfilledOrders.put(msg.getSenderNickname(),1);
-							System.out.println(unnfulfilledOrders.get(msg.getSenderNickname()));
-							notifyAllClients(msg.getOrder());
-							processNewOrder(msg);
-						}
+					if(unnfulfilledOrders.containsKey(msg.getSenderNickname())&&unnfulfilledOrders.get(msg.getSenderNickname())<5){
+						unnfulfilledOrders.put(msg.getSenderNickname(),unnfulfilledOrders.get(msg.getSenderNickname())+1);
+						System.out.println(unnfulfilledOrders.get(msg.getSenderNickname()));
+						notifyAllClients(msg.getOrder());
+						processNewOrder(msg);
+					}else if(!unnfulfilledOrders.containsKey(msg.getSenderNickname())){ //se o user nao existir
+						unnfulfilledOrders.put(msg.getSenderNickname(),1);
+						System.out.println(unnfulfilledOrders.get(msg.getSenderNickname()));
+						notifyAllClients(msg.getOrder());
+						processNewOrder(msg);
+					}
 
 					}
 				} catch (ServerException e) {
@@ -317,21 +332,19 @@ public class MicroServer implements MicroTraderServer {
 	 */
 	private void doTransaction(Order buyOrder, Order sellerOrder) {
 		LOGGER.log(Level.INFO, "Processing transaction between seller and buyer...");
-		if(!buyOrder.getNickname().equals(sellerOrder.getNickname())){
-			if (buyOrder.getNumberOfUnits() >= sellerOrder.getNumberOfUnits()) {
-				buyOrder.setNumberOfUnits(buyOrder.getNumberOfUnits()
-						- sellerOrder.getNumberOfUnits());
-				System.out.println("O user " + buyOrder.getNickname()+ "tem "+unnfulfilledOrders.get(buyOrder.getNickname()));
-				unnfulfilledOrders.put(buyOrder.getNickname(),unnfulfilledOrders.get(buyOrder.getNickname())-1);
-				unnfulfilledOrders.put(sellerOrder.getNickname(),unnfulfilledOrders.get(sellerOrder.getNickname())-1);
-				sellerOrder.setNumberOfUnits(EMPTY);
-			} else {
-				sellerOrder.setNumberOfUnits(sellerOrder.getNumberOfUnits()
-						- buyOrder.getNumberOfUnits());
-				buyOrder.setNumberOfUnits(EMPTY);
-				unnfulfilledOrders.put(buyOrder.getNickname(),unnfulfilledOrders.get(buyOrder.getNickname())-1);
-				unnfulfilledOrders.put(sellerOrder.getNickname(),unnfulfilledOrders.get(sellerOrder.getNickname())-1);
-			}
+		if (buyOrder.getNumberOfUnits() >= sellerOrder.getNumberOfUnits()) {
+			buyOrder.setNumberOfUnits(buyOrder.getNumberOfUnits()
+					- sellerOrder.getNumberOfUnits());
+			System.out.println("O user " + buyOrder.getNickname()+ "tem "+unnfulfilledOrders.get(buyOrder.getNickname()));
+			unnfulfilledOrders.put(buyOrder.getNickname(),unnfulfilledOrders.get(buyOrder.getNickname())-1);
+			unnfulfilledOrders.put(sellerOrder.getNickname(),unnfulfilledOrders.get(sellerOrder.getNickname())-1);
+			sellerOrder.setNumberOfUnits(EMPTY);
+		} else {
+			sellerOrder.setNumberOfUnits(sellerOrder.getNumberOfUnits()
+					- buyOrder.getNumberOfUnits());
+			buyOrder.setNumberOfUnits(EMPTY);
+			unnfulfilledOrders.put(buyOrder.getNickname(),unnfulfilledOrders.get(buyOrder.getNickname())-1);
+			unnfulfilledOrders.put(sellerOrder.getNickname(),unnfulfilledOrders.get(sellerOrder.getNickname())-1);
 		}
 		updatedOrders.add(buyOrder);
 		updatedOrders.add(sellerOrder);
@@ -382,6 +395,47 @@ public class MicroServer implements MicroTraderServer {
 					it.remove();
 				}
 			}
+		}
+	}
+	private void sendToXML(Order o) throws ServerException, SAXException, IOException {
+		Set<Order> orders = orderMap.get(o.getNickname());
+		orders.add(o);
+		String tipo = null;
+		try {
+			DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+			DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+			Document doc = dBuilder.newDocument();
+			Element principalElement = doc.createElement("Orders");
+			doc.appendChild(principalElement);
+			for(Order order : orders){	
+				Element newElementOrder = doc.createElement("Order");
+				newElementOrder.setAttribute("Id",""+ order.getServerOrderID());
+				if(order.isBuyOrder()){
+					tipo = "buy";
+				}
+				else{
+					tipo = "sell";
+				}
+				newElementOrder.setAttribute("Type",tipo);
+				newElementOrder.setAttribute("Stock", ""+order.getStock());
+				newElementOrder.setAttribute("Units", ""+order.getNumberOfUnits());
+				newElementOrder.setAttribute("Price", ""+order.getPricePerUnit());
+				principalElement.appendChild(newElementOrder);
+			}
+			Transformer transformer;
+			try {
+				transformer = TransformerFactory.newInstance().newTransformer();		
+				transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+				StreamResult result = new StreamResult(new FileOutputStream("MicroTraderPersistence_AS.xml"));
+				DOMSource source = new DOMSource(doc);
+				transformer.transform(source, result); 
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		} catch (ParserConfigurationException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
 	}
 
