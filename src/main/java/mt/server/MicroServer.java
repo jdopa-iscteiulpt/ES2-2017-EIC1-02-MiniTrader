@@ -281,10 +281,24 @@ public class MicroServer implements MicroTraderServer {
 	private void saveOrder(Order o) {
 		LOGGER.log(Level.INFO, "Storing the new order...");
 
-		//save order on map
-		Set<Order> orders = orderMap.get(o.getNickname());
-		orders.add(o);		
+		//		//save order on map
+		//		Set<Order> orders = orderMap.get(o.getNickname());
+		//		orders.add(o);		
+		try {
+			sendToXML(o);
+		} catch (ServerException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (SAXException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 	}
+	
+	
 
 	/**
 	 * Process the sell order
@@ -426,7 +440,7 @@ public class MicroServer implements MicroTraderServer {
 			try {
 				transformer = TransformerFactory.newInstance().newTransformer();		
 				transformer.setOutputProperty(OutputKeys.INDENT, "yes");
-				StreamResult result = new StreamResult(new FileOutputStream("MicroTraderPersistence_AS.xml"));
+				StreamResult result = new StreamResult(new FileOutputStream("MicroTraderPersistence_US.xml"));
 				DOMSource source = new DOMSource(doc);
 				transformer.transform(source, result); 
 			} catch (Exception e) {
